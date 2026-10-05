@@ -111,14 +111,14 @@ explicitly marked pending joint finalization with the Gateway team.
 
 ## Penyesuaian 
 
-## ile Switching yang Ditambah / Diubah (Total 6 File)
+## File Switching yang Ditambah / Diubah (Total 6 File)
 Lokasi root:`D:\switching-main\backend\`
 
 ### ✨ File BARU (Dibuat dari Nol — 1 File)
-# File Deskripsi 1 webhook-crypto.util.ts Core crypto utility untuk HMAC-SHA256 webhook. Berisi:`computeHmacSha256Hex` ,`buildSignedPayload (timestamp+"."+rawBody)` ,`verifyWebhookSignature` (timestamp tolerance + constant-time compare),`signOutgoingWebhookRequest` , export type`HeaderConvention` + const`DEFAULT_TOLERANCE_MS=300000` .
+File Deskripsi 1 webhook-crypto.util.ts Core crypto utility untuk HMAC-SHA256 webhook. Berisi:`computeHmacSha256Hex` ,`buildSignedPayload (timestamp+"."+rawBody)` ,`verifyWebhookSignature` (timestamp tolerance + constant-time compare),`signOutgoingWebhookRequest` , export type`HeaderConvention` + const`DEFAULT_TOLERANCE_MS=300000` .
 
 ### 🔧 File DIMODIFIKASI (Diedit dari original — 5 File)
-# File Perubahan Utama 2 gateway-webhook.guard.ts Guard utama upgrade dual-layer :
+ File Perubahan Utama 2 gateway-webhook.guard.ts Guard utama upgrade dual-layer :
  • Layer 1 TETAP (unchanged): cek`x-api-key` via`timingSafeStringEqual` (original baris 17-18 user)
  • Layer 2 BARU: HMAC-SHA256 verify via`verifyWebhookSignature()`
  • Graceful rollout : jika`GATEWAY_WEBHOOK_SHARED_SECRET` kosong → skip layer2; jika`SIGNATURE_REQUIRED=false` → mismatch tidak reject dulu. 3 main.ts Capture raw body untuk HMAC (KRITIS — tanpa ini signature mismatch 100%):
