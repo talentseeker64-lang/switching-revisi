@@ -1,0 +1,300 @@
+// Digital Switching System - data model
+// See docs/data-dictionary-erd.md for field-level descriptions and rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard / platform users (RBAC)
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  fullName     String
+  role         UserRole   @default(VIEWER)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Partner / Merchant management
+// ---------------------------------------------------------------------------
+
+enum PartnerType {
+  KOPERASI
+  RESI_GUDANG
+  PETANI
+  PETERNAK
+  NELAYAN
+  PEKEBUN
+  TOKO_WARUNG
+  LOGISTIK
+  PENYEDIA_ALSINTAN
+  PENGGILINGAN_PADI
+  DISTRIBUTOR
+  PAYMENT_GATEWAY
+  ECOMMERCE_MARKETPLACE
+  OTHER
+}
+
+enum PartnerStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model Partner {
+  id           String        @id @default(uuid())
+  code         String        @unique
+  name         String
+  type         PartnerType
+  status       PartnerStatus @default(INACTIVE)
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  credentials   ApiCredential[]
+  routingRules  RoutingRule[]
+  transactions  Transaction[]
+
+  @@map("partners")
+}
+
+enum CredentialStatus {
+  ACTIVE
+  REVOKED
+}
+
+model ApiCredential {
+  id            String            @id @default(uuid())
+  partnerId     String
+  partner       Partner           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  apiKey        String            @unique
+  apiKeyPrefix  String
+  apiSecretHash String
+  status        CredentialStatus  @default(ACTIVE)
+  createdAt     DateTime          @default(now())
+  revokedAt     DateTime?
+
+  @@index([partnerId])
+  @@map("api_credentials")
+}
+
+// ---------------------------------------------------------------------------
+// Routing
+// ---------------------------------------------------------------------------
+
+model RoutingRule {
+  id              String   @id @default(uuid())
+  name            String
+  transactionType String
+  partnerId       String?
+  partner         Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  targetService   String
+  targetConfig    Json?
+  priority        Int      @default(100)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  transactions Transaction[]
+
+  @@index([transactionType, isActive, priority])
+  @@map("routing_rules")
+}
+
+// ---------------------------------------------------------------------------
+// Transactions
+// ---------------------------------------------------------------------------
+
+enum TransactionStatus {
+  RECEIVED
+  VALIDATING
+  ROUTING
+  PROCESSING
+  PENDING
+  SUCCESS
+  FAILED
+  TIMEOUT
+  CANCELLED
+}
+
+model Transaction {
+  id                     String             @id @default(uuid())
+  switchingTransactionId String             @unique
+  businessTransactionId  String
+  partnerId              String
+  partner                Partner            @relation(fields: [partnerId], references: [id])
+  transactionType        String
+  status                 TransactionStatus  @default(RECEIVED)
+  correlationId          String             @unique
+  idempotencyKey         String
+  payload                Json
+  transformedPayload      Json?
+  routingRuleId           String?
+  routingRule             RoutingRule?       @relation(fields: [routingRuleId], references: [id], onDelete: SetNull)
+  gatewayRequestId        String?
+  blockchainTxHash        String?
+  errorCode                String?
+  errorMessage             String?
+  createdAt               DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  statusHistory      TransactionStatusHistory[]
+  webhookEvents       WebhookEvent[]
+  reconciliations     ReconciliationRecord[]
+
+  @@unique([partnerId, idempotencyKey])
+  @@index([status])
+  @@index([partnerId])
+  @@map("transactions")
+}
+
+model TransactionStatusHistory {
+  id            String             @id @default(uuid())
+  transactionId String
+  transaction   Transaction        @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  fromStatus    TransactionStatus?
+  toStatus      TransactionStatus
+  reason        String?
+  actor         String?
+  createdAt     DateTime           @default(now())
+
+  @@index([transactionId])
+  @@map("transaction_status_history")
+}
+
+// ---------------------------------------------------------------------------
+// Audit trail
+// ---------------------------------------------------------------------------
+
+enum AuditActorType {
+  USER
+  PARTNER
+  SYSTEM
+}
+
+model AuditLog {
+  id             String         @id @default(uuid())
+  actorType      AuditActorType
+  actorId        String?
+  action         String
+  endpoint       String
+  method         String
+  requestId      String
+  correlationId  String?
+  ipAddress      String?
+  responseStatus Int?
+  durationMs     Int?
+  errorMessage   String?
+  createdAt      DateTime       @default(now())
+
+  @@index([createdAt])
+  @@index([actorType, actorId])
+  @@index([correlationId])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Blockchain Gateway integration
+// ---------------------------------------------------------------------------
+
+enum WebhookSource {
+  BLOCKCHAIN_GATEWAY
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+model WebhookEvent {
+  id            String        @id @default(uuid())
+  source        WebhookSource
+  eventType     String
+  payload       Json
+  status        WebhookStatus @default(RECEIVED)
+  transactionId String?
+  transaction   Transaction?  @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  receivedAt    DateTime      @default(now())
+  processedAt   DateTime?
+  errorMessage  String?
+
+  @@index([transactionId])
+  @@map("webhook_events")
+}
+
+// ---------------------------------------------------------------------------
+// DB-backed retry / timeout job queue (no Redis dependency for MVP)
+// ---------------------------------------------------------------------------
+
+enum JobType {
+  RETRY_GATEWAY_CALL
+  TIMEOUT_CHECK
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+model JobQueue {
+  id          String    @id @default(uuid())
+  type        JobType
+  payload     Json
+  status      JobStatus @default(PENDING)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  nextRunAt   DateTime  @default(now())
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, nextRunAt])
+  @@map("job_queue")
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation
+// ---------------------------------------------------------------------------
+
+model ReconciliationRecord {
+  id              String      @id @default(uuid())
+  transactionId   String
+  transaction     Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  switchingStatus TransactionStatus
+  gatewayStatus   String?
+  matched         Boolean
+  notes           String?
+  checkedAt       DateTime    @default(now())
+
+  @@index([transactionId])
+  @@map("reconciliation_records")
+}
